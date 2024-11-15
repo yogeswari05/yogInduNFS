@@ -49,48 +49,147 @@ void handle_delete(const char* path) {
 }
 
 void handle_read(int client_socket, const char* path) {
-   char buffer[BUFFER_SIZE];
-   FILE* file = fopen(path, "rb");
-
-   if (file == NULL) {
-      const char* error = "Error opening file";
-      send(client_socket, error, strlen(error), 0);
+   // Receive the file path from the client
+   int bytes_received = recv(client_socket, path, sizeof(path), 0);
+   if (bytes_received <= 0) {
+      perror("Failed to receive file path from client");
+      close(client_socket);
       return;
    }
-
-   size_t bytes_read;
-   while ((bytes_read = fread(buffer, 1, BUFFER_SIZE, file)) > 0) {
-      send(client_socket, buffer, bytes_read, 0);
+   else {
+      printf("Received file path from client: %s\n", path);
    }
 
+   // Open the requested file
+   FILE *file = fopen(path, "rb");
+   if (!file) {
+      perror("Failed to open file");
+      const char *error_msg = "Error: File not found or unable to open\n";
+      send(client_socket, error_msg, strlen(error_msg) + 1, 0);
+      close(client_socket);
+      return;
+   }
+   else{
+      printf("File opened successfully\n");
+   }
+   // Send the file contents to the client
+   char buffer[BUFFER_SIZE];
+   size_t bytes_read;
+
+   while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+      if (send(client_socket, buffer, bytes_read, 0) < 0) {
+         perror("Failed to send file content to client");
+         fclose(file);
+         close(client_socket);
+         return;
+      }
+   }
+   // Send an EOF marker or a message indicating the end of the file
+   const char *end_msg = "END_OF_FILE";
+   send(client_socket, end_msg, strlen(end_msg) + 1, 0);
+
+   // Close the file and the client socket
    fclose(file);
+   close(client_socket);
 }
 
-void handle_write(int client_socket, const char* path) {
-   char buffer[BUFFER_SIZE];
-   FILE* file = fopen(path, "wb");
+void handle_write(int client_socket) {
+   char file_path[256];
+   char data[1024];
 
-   if (file == NULL) {
-      const char* error = "Error creating file";
-      send(client_socket, error, strlen(error), 0);
+   // Receive file path
+   if (recv(client_socket, file_path, sizeof(file_path), 0) <= 0) {
+      perror("Failed to receive file path");
+      close(client_socket);
       return;
    }
-
-   ssize_t bytes_received;
-   while ((bytes_received = recv(client_socket, buffer, BUFFER_SIZE, 0)) > 0) {
-      fwrite(buffer, 1, bytes_received, file);
-      if (bytes_received < BUFFER_SIZE) break;
+   // Receive data to be written
+   if (recv(client_socket, data, sizeof(data), 0) <= 0) {
+      perror("Failed to receive data");
+      close(client_socket);
+      return;
    }
-
+   // Write data to the file
+   FILE *file = fopen(file_path, "w");
+   if (!file) {
+      perror("Failed to open file for writing");
+      const char *error_msg = "Error: Unable to write to file";
+      send(client_socket, error_msg, strlen(error_msg) + 1, 0);
+      close(client_socket);
+      return;
+   }
+   fwrite(data, 1, strlen(data), file);
    fclose(file);
-   const char* success = "File written successfully";
-   send(client_socket, success, strlen(success), 0);
+   // Send success message
+   const char *success_msg = "File written successfully";
+   send(client_socket, success_msg, strlen(success_msg) + 1, 0);
+   close(client_socket);
+}
+
+void handle_get_file_info(int client_socket) {
+   char file_path[256];
+
+   // Receive file path
+   if (recv(client_socket, file_path, sizeof(file_path), 0) <= 0) {
+      perror("Failed to receive file path");
+      close(client_socket);
+      return;
+   }
+   // Get file information
+   struct stat file_stat;
+   if (stat(file_path, &file_stat) != 0) {
+      perror("Failed to get file info");
+      const char *error_msg = "Error: Unable to retrieve file info";
+      send(client_socket, error_msg, strlen(error_msg) + 1, 0);
+      close(client_socket);
+      return;
+   }
+   // Prepare and send file info
+   char response[256];
+   snprintf(response, sizeof(response), "Size: %ld bytes, Permissions: %o",
+            file_stat.st_size, file_stat.st_mode & 0777);
+   send(client_socket, response, strlen(response) + 1, 0);
+   close(client_socket);
+}
+
+void handle_stream_audio(int client_socket) {
+   char file_path[256];
+
+   // Receive file path
+   if (recv(client_socket, file_path, sizeof(file_path), 0) <= 0) {
+      perror("Failed to receive file path");
+      close(client_socket);
+      return;
+   }
+   // Open the audio file
+   FILE *file = fopen(file_path, "rb");
+   if (!file) {
+      perror("Failed to open audio file");
+      const char *error_msg = "Error: Unable to open audio file";
+      send(client_socket, error_msg, strlen(error_msg) + 1, 0);
+      close(client_socket);
+      return;
+   }
+   // Stream the file contents
+   char buffer[BUFFER_SIZE];
+   size_t bytes_read;
+
+   while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+      if (send(client_socket, buffer, bytes_read, 0) < 0) {
+         perror("Failed to send audio data");
+         fclose(file);
+         close(client_socket);
+         return;
+      }
+   }
+   fclose(file);
+   close(client_socket);
 }
 
 void* handle_client(void* arg) {
    ClientHandler* handler = (ClientHandler*)arg;
    char buffer[BUFFER_SIZE];
-
+   printf("Client connected\n");
    while (1) {
       memset(buffer, 0, BUFFER_SIZE);
       ssize_t bytes_received = recv(handler->client_socket, buffer, BUFFER_SIZE - 1, 0);
@@ -98,28 +197,24 @@ void* handle_client(void* arg) {
       if (bytes_received <= 0) break;
 
       buffer[bytes_received] = '\0';
-
+      printf("Received message from the client: %s\n", buffer);
       char command[32];
       char path[MAX_PATH_LENGTH];
       sscanf(buffer, "%s %s", command, path);
 
-      // Construct full path
-      char full_path[MAX_PATH_LENGTH];
-      snprintf(full_path, sizeof(full_path), "%s", path);
-
-      if (strcmp(command, "CREATE") == 0) {
-         handle_create(full_path);
-      } else if (strcmp(command, "DELETE") == 0) {
-         handle_delete(full_path);
-      } else if (strcmp(command, "READ") == 0) {
-         handle_read(handler->client_socket, full_path);
-      } else if (strcmp(command, "WRITE") == 0) {
-         handle_write(handler->client_socket, full_path);
+      if (strcmp(command, "READ") == 0){
+         printf("Read request for: %s\n", path);
+         handle_read(handler->client_socket, path);
+      }
+      else if (strcmp(command, "DELETE") == 0){
+         handle_delete(path);
+      }
+      else if (strcmp(command, "WRITE") == 0){
+         handle_write(handler->client_socket);
       }
    }
-
-   close(handler->client_socket);
-   free(handler);
+   // close(handler->client_socket);
+   // free(handler);
    return NULL;
 }
 
@@ -265,7 +360,9 @@ int main(int argc, char *argv[]) {
    struct sockaddr_in server_addr;
    memset(&server_addr, 0, sizeof(server_addr));
    server_addr.sin_family = AF_INET;
-   server_addr.sin_addr.s_addr = INADDR_ANY;
+   char ip_address[16] = {0};
+   get_local_ip(ip_address);
+   server_addr.sin_addr.s_addr = inet_addr(ip_address);
    server_addr.sin_port = htons(client_port);
 
    if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
@@ -288,6 +385,11 @@ int main(int argc, char *argv[]) {
       if (client_socket < 0) {
          perror("Accept failed");
          continue;
+      }
+      else {
+         printf("New connection from %s:%d\n",
+               inet_ntoa(client_addr.sin_addr),
+               ntohs(client_addr.sin_port));
       }
 
       ClientHandler *handler = malloc(sizeof(ClientHandler));

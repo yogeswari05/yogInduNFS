@@ -60,7 +60,7 @@ void hash_map_print(HashMap *map) {
       HashNode *current = map->table[i];
       while (current != NULL) {
          printf("Path: %s, Server: %s:%d\n", current->path,
-                  current->server->ip_address, current->server->nm_port);
+                  current->server->ip_address, current->server->client_port);
          current = current->next;
       }
    }
@@ -167,33 +167,23 @@ void handle_client_request(int client_socket) {
       // Parse client request
       char command[32];
       char path[MAX_PATH_LENGTH];
-      sscanf(buffer, "%s %s", command, path);
-
-      printf("command is : [%s]\n",command);
-      
+      sscanf(buffer, "%s %s", command, path);      
       if (strcmp(command, "GET_SERVER") == 0) {
          printf("entered\n");
          // Find appropriate storage server
          pthread_mutex_lock(&naming_server.lock);
-         // StorageServer* selected_ss = NULL;
-         
-         // for (int i = 0; i < naming_server.num_storage_servers; i++) {
-         //    if (naming_server.storage_servers[i].is_active) {
-         //       // Simple round-robin selection for now
-         //       selected_ss = &naming_server.storage_servers[i];
-         //       break;
-         //    }
-         // }
-
-         // selected_ss->ip_address = "10.2.143.206";
          StorageServer *server = hash_map_find(&naming_server.path_to_server_map, path);
 
          if (server) {
+            printf("storage Server found\n");
             char response[BUFFER_SIZE];
             sprintf(response, "%s %d", server->ip_address, server->client_port);
-            send(client_socket, response, strlen(response), 0);
+            if(send(client_socket, response, strlen(response), 0) < 0){
+               perror("Failed to send server info to client");
+            }
          } 
          else {
+            printf("No storage server found\n");
             const char *error = "No server found for the requested path";
             send(client_socket, error, strlen(error), 0);
          }
