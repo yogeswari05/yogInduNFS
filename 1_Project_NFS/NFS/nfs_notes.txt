@@ -1,4 +1,0 @@
-Naming server always waits for ss or clients requests. On ss request, 
-it takes details of ss, and stores in some ds.
-Storage server, while sending connection request to ns, sends details
-about it(lessay through cli).
