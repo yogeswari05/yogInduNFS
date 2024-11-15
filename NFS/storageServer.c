@@ -155,7 +155,7 @@ int main(int argc, char *argv[]) {
 
    char *nm_ip = argv[1];           // Naming server IP
    int nm_port = atoi(argv[2]);     // Naming server port
-   int server_port = atoi(argv[3]); // Storage server port
+   int sn_server_port = atoi(argv[3]); // Storage server port
    int client_port = atoi(argv[4]); // Client communication port
 
    // Get local IP address
@@ -169,11 +169,24 @@ int main(int argc, char *argv[]) {
       return 1;
    }
    
+   // Bind to the specific source IP and port
+   struct sockaddr_in source_addr;
+   memset(&source_addr, 0, sizeof(source_addr));
+   source_addr.sin_family = AF_INET;
+   source_addr.sin_addr.s_addr = inet_addr(server_ip); // Use the server's IP
+   source_addr.sin_port = htons(sn_server_port);       // Use the specified port
+
+   if (bind(nm_socket, (struct sockaddr *)&source_addr, sizeof(source_addr)) < 0) {
+      perror("Bind to source IP and port failed");
+      return 1;
+   }
+
+   // Configure Naming Server address
    struct sockaddr_in nm_addr;
-   memset(&nm_addr, 0, sizeof(nm_addr));       // Initialize the struct to 0
-   nm_addr.sin_family = AF_INET;               // Use IPv4 addressing
-   nm_addr.sin_addr.s_addr = inet_addr(nm_ip); // Set the IP address of the naming server (converted from string to IP format)
-   nm_addr.sin_port = htons(nm_port);          // Set the port number, converting it to network byte order
+   memset(&nm_addr, 0, sizeof(nm_addr));
+   nm_addr.sin_family = AF_INET;
+   nm_addr.sin_addr.s_addr = inet_addr(nm_ip);
+   nm_addr.sin_port = htons(nm_port);
 
    if (connect(nm_socket, (struct sockaddr *)&nm_addr, sizeof(nm_addr)) < 0) {
       perror("Connection to Naming Server failed");
@@ -219,7 +232,7 @@ int main(int argc, char *argv[]) {
       printf("%s\n", accessible_paths[i]);
    }
    // Start with the number of paths as the first part of the message
-   sprintf(reg_msg, "%s %d %d %d %d", server_ip, nm_port, server_port, client_port, num_paths);
+   sprintf(reg_msg, "%s %d %d %d %d", server_ip, nm_port, sn_server_port, client_port, num_paths);
 
    // Append each path to the message
    for (int i = 0; i < num_paths; i++) {
@@ -253,7 +266,7 @@ int main(int argc, char *argv[]) {
    memset(&server_addr, 0, sizeof(server_addr));
    server_addr.sin_family = AF_INET;
    server_addr.sin_addr.s_addr = INADDR_ANY;
-   server_addr.sin_port = htons(server_port);
+   server_addr.sin_port = htons(client_port);
 
    if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
       perror("Bind failed");
